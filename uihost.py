@@ -10,7 +10,7 @@ import psutil
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QScrollArea, QListWidgetItem, QGroupBox, QDialog
+from PyQt6.QtWidgets import QScrollArea, QListWidgetItem, QGroupBox, QDialog, QHeaderView
 from PyQt6.QtWidgets import QGridLayout
 from PyQt6.QtWidgets import QHBoxLayout
 from PyQt6.QtWidgets import QListWidget
@@ -33,34 +33,6 @@ from UI_lib.controller_lib import Controller
 from logger import Logger
 from Backend_lib.Linux.bluez import BluetoothDeviceManager
 
-
-
-class CustomDialog(QDialog):
-
-    """ Dialog window shown when no controller is selected but an action is attempted.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Warning!")
-        layout = QVBoxLayout()
-        message = QLabel("Connect the device !!")
-        layout.addWidget(message)
-        self.setLayout(layout)
-
-    def showEvent(self, event):
-        """ Centers the dialog box on top of the parent widget when displayed
-
-         Args :
-            event (QShowEvent) : Qt show event object
-
-         returns: None
-         """
-        parent_geometry = self.parent().geometry()
-        dialog_geometry = self.geometry()
-        x = (parent_geometry.x() + (parent_geometry.width() - dialog_geometry.width()) // 2)
-        y = (parent_geometry.y() + (parent_geometry.height() - dialog_geometry.height()) // 2)
-        self.move(x, y)
-        super().showEvent(event)
 
 
 class Controller:
@@ -289,6 +261,13 @@ class TestApplication(QWidget):
         self.table_widget.setFont(bold_font)
         self.table_widget.setFixedSize(475, 180)
 
+        header = self.table_widget.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+
+        self.table_widget.setColumnWidth(0, 110)
+        self.table_widget.setColumnWidth(1, 140)
+        self.table_widget.setColumnWidth(2, 200)
+
         for i, device_path in enumerate(devices):
             device = dbus.Interface(bus.get_object("org.bluez", device_path), dbus_interface="org.bluez.Device1")
             device_props = dbus.Interface(bus.get_object("org.bluez", device_path),
@@ -297,25 +276,35 @@ class TestApplication(QWidget):
             device_name = device_props.Get("org.bluez.Device1", "Alias")
             self.table_widget.setItem(i, 0, QTableWidgetItem(device_name))
             self.table_widget.setItem(i, 1, QTableWidgetItem(device_address))
-            self.table_widget.horizontalHeader().setStretchLastSection(True)
+            # self.table_widget.horizontalHeader().setStretchLastSection(True)
             button_widget = QWidget()
             button_layout = QHBoxLayout()
+
+            # Get the table or screen width
+            table_width = self.table_widget.viewport().width() if self.table_widget else 800  # fallback
+
+            # Calculate dynamic font size (adjust scaling factor as needed)
+            font_size = max(6, min(10, table_width // 100))  # range between 6 and 10pt
+            small_font = QFont()
+            small_font.setBold(True)
+            small_font.setPointSize(font_size)
+
             pair_button = QPushButton("PAIR")
-            pair_button.setFont(bold_font)
+            pair_button.setFont(small_font)
             pair_button.setStyleSheet("color:green")
             pair_button.setMinimumSize(30, 20)
             # pair_button.setFixedHeight(30)
             button_layout.addWidget(pair_button)
 
-            br_edr_connect_button = QPushButton("BR_EDR_CONNECT")
-            br_edr_connect_button.setFont(bold_font)
+            br_edr_connect_button = QPushButton("BR_CONNECT")
+            br_edr_connect_button.setFont(small_font)
             br_edr_connect_button.setStyleSheet("color:green")
             br_edr_connect_button.setMinimumSize(30, 20)
             # br_edr_connect_button.setFixedHeight(30)
             button_layout.addWidget(br_edr_connect_button)
 
             le_connect_button = QPushButton("LE_CONNECT")
-            le_connect_button.setFont(bold_font)
+            le_connect_button.setFont(small_font)
             le_connect_button.setStyleSheet("color:green")
             le_connect_button.setMinimumSize(30, 20)
             # le_connect_button.setFixedHeight(30)
@@ -489,12 +478,12 @@ class TestApplication(QWidget):
             streaming_buttons_layout = QHBoxLayout()
             self.start_streaming_button = QPushButton("Start Streaming")
             self.start_streaming_button.setObjectName("startButton")
-            self.start_streaming_button.clicked.connect(self.bluetooth_device_manager.start_a2dp_stream)
+            self.start_streaming_button.clicked.connect(self.start_streaming)
             streaming_buttons_layout.addWidget(self.start_streaming_button)
 
             self.stop_streaming_button = QPushButton("Stop Streaming")
             self.stop_streaming_button.setObjectName("stopButton")
-            self.stop_streaming_button.clicked.connect(self.bluetooth_device_manager.stop_a2dp_stream)
+            self.stop_streaming_button.clicked.connect(self.stop_streaming)
             self.stop_streaming_button.setEnabled(False)
             streaming_buttons_layout.addWidget(self.stop_streaming_button)
             streaming_layout.addLayout(streaming_buttons_layout)
@@ -702,7 +691,7 @@ class TestApplication(QWidget):
         success = self.bluetooth_device_manager.start_opp_receiver()
         QMessageBox.information(None, "OPP", "Ready to receive files..." if success else "Failed to start receiver.")
 
-    def build_opp_tab(self):
+    def build_opp_tab(self,device_address):
         bold_font = QFont()
         bold_font.setBold(True)
 
@@ -734,36 +723,39 @@ class TestApplication(QWidget):
         #layout.addWidget(device_label)
 
         # File selection
-        file_selection_layout = QHBoxLayout()
-        file_label = QLabel("Select File:")
-        file_label.setFont(bold_font)
-        file_label.setStyleSheet("color:black;")
-        file_selection_layout.addWidget(file_label)
-        self.opp_location_input = QLineEdit()
-        self.opp_location_input.setReadOnly(True)
-        file_selection_layout.addWidget(self.opp_location_input)
-        self.browse_opp_button = QPushButton("Browse")
-        self.browse_opp_button.setFont(bold_font)
-        self.browse_opp_button.clicked.connect(self.browse_opp_file)
-        file_selection_layout.addWidget(self.browse_opp_button)
-        layout.addLayout(file_selection_layout)
+        is_connected= self.bluetooth_device_manager.is_device_connected(device_address)
+        #is connected=self.bluetooth_device_manager.get_connected_devices(device_address)
+        if is_connected:
+            file_selection_layout = QHBoxLayout()
+            file_label = QLabel("Select File:")
+            file_label.setFont(bold_font)
+            file_label.setStyleSheet("color:black;")
+            file_selection_layout.addWidget(file_label)
+            self.opp_location_input = QLineEdit()
+            self.opp_location_input.setReadOnly(True)
+            file_selection_layout.addWidget(self.opp_location_input)
+            self.browse_opp_button = QPushButton("Browse")
+            self.browse_opp_button.setFont(bold_font)
+            self.browse_opp_button.clicked.connect(self.browse_opp_file)
+            file_selection_layout.addWidget(self.browse_opp_button)
+            layout.addLayout(file_selection_layout)
 
 
         # Send and Receive buttons
-        button_layout = QHBoxLayout()
-        self.send_file_button = QPushButton("Send File")
-        self.send_file_button.setFont(bold_font)
-        self.send_file_button.setStyleSheet("color:black;")
-        self.send_file_button.clicked.connect(self.send_file)
-        button_layout.addWidget(self.send_file_button)
+            button_layout = QHBoxLayout()
+            self.send_file_button = QPushButton("Send File")
+            self.send_file_button.setFont(bold_font)
+            self.send_file_button.setStyleSheet("color:black;")
+            self.send_file_button.clicked.connect(self.send_file)
+            button_layout.addWidget(self.send_file_button)
 
-        self.receive_file_button = QPushButton("Receive File")
-        self.receive_file_button.setFont(bold_font)
-        self.receive_file_button.setStyleSheet("color:black;")
-        self.receive_file_button.clicked.connect(self.receive_file)
-        button_layout.addWidget(self.receive_file_button)
+            self.receive_file_button = QPushButton("Receive File")
+            self.receive_file_button.setFont(bold_font)
+            self.receive_file_button.setStyleSheet("color:black;")
+            self.receive_file_button.clicked.connect(self.receive_file)
+            button_layout.addWidget(self.receive_file_button)
 
-        layout.addLayout(button_layout)
+            layout.addLayout(button_layout)
 
         widget = QWidget()
         widget.setLayout(layout)
@@ -775,7 +767,7 @@ class TestApplication(QWidget):
         bold_font = QFont()
         bold_font.setBold(True)
         is_connected = self.bluetooth_device_manager.is_device_connected(device_address)
-
+        #print(is_connected)
         if hasattr(self, 'profile_methods_widget'):
             self.profile_methods_widget.setParent(None)
 
@@ -883,7 +875,6 @@ class TestApplication(QWidget):
             QMessageBox.warning(self, "Connection Failed", f"Failed to connect to {device_address}.")
 
     def disconnect_and_reload(self, device_address):
-        print("disconnection in process...")
         success = self.bluetooth_device_manager.disconnect_le_device(device_address,self.interface)
         if success:
             print(f"[INFO] Disconnected from {device_address}")
@@ -892,14 +883,17 @@ class TestApplication(QWidget):
         self.load_profile_tabs_for_device(device_address)
 
     def unpair_and_reload(self, device_address):
-        print("unpair in process...")
-        success = self.bluetooth_device_manager.unpair_device(device_address,self.interface)
+        success = self.bluetooth_device_manager.remove_device(device_address,self.interface)
         if success:
             print(f"[INFO] Unpaired {device_address}")
         else:
             QMessageBox.warning(self, "Unpair Failed", f"Could not unpair {device_address}")
         self.remove_unpaired_device(device_address)
-        self.load_profile_tabs_for_device(device_address)
+
+        if (self.profiles_list_widget.count())==1:
+            self.profiles_list_widget.itemSelectionChanged.connect(self.profile_selected)
+        else:
+            self.load_profile_tabs_for_device(device_address)
 
     def remove_unpaired_device(self, unpaired_address):
         """
@@ -911,49 +905,7 @@ class TestApplication(QWidget):
             if item_text == unpaired_address:
                 self.profiles_list_widget.takeItem(i)
                 break
-    
-    '''
-    def load_profile_tabs_for_device(self, device_address):
-        bold_font = QFont()
-        bold_font.setBold(True)
 
-        if hasattr(self, 'profile_methods_widget'):
-            self.profile_methods_widget.setParent(None)
-
-        self.device_address = device_address
-        self.profile_description_text_browser.clear()
-        self.profile_description_text_browser.append(f"Connected Device: {device_address}")
-        self.profile_description_text_browser.setFont(bold_font)
-        self.profile_description_text_browser.append("Select a profile to proceed (A2DP or OPP)")
-
-        # Create empty tabs for A2DP and OPP
-        self.device_tab_widget = QTabWidget()
-        self.device_tab_widget.setMaximumWidth(600)
-        self.device_tab_widget.setFont(bold_font)
-
-        # Empty widgets that will be filled when the tab is clicked
-        self.a2dp_tab_placeholder = QWidget()
-        self.a2dp_tab_placeholder.setMaximumWidth(600)
-        self.opp_tab_placeholder = QWidget()
-        self.opp_tab_placeholder.setMaximumWidth(600)
-
-        self.device_tab_widget.addTab(self.a2dp_tab_placeholder, "A2DP")
-        self.device_tab_widget.addTab(self.opp_tab_placeholder, "OPP")
-        self.device_tab_widget.setStyleSheet("color: black; background-color: lightblue;")
-
-        self.device_tab_widget.currentChanged.connect(self.on_profile_tab_changed)
-
-        self.profile_methods_layout = QHBoxLayout()
-        #self.profile_methods_layout.setContentsMargins(10,0,10,0)
-        self.profile_methods_layout.addWidget(self.device_tab_widget)
-        self.profile_methods_widget = QWidget()
-        self.profile_methods_widget.setMaximumWidth(500)
-        #self.profile_methods_widget.setContentsMargins(10,0,10,0)
-        self.profile_methods_widget.setLayout(self.profile_methods_layout)
-        self.findChild(QGridLayout).addWidget(self.profile_methods_widget, 2, 2, 3, 1)
-        # Manually trigger the tab setup for the default (usually first) tab
-        #self.on_profile_tab_changed(self.device_tab_widget.currentIndex())
-    '''
 #---------PROFILE TAB SELECTION-----------------------------
     def on_profile_tab_changed(self, index):
         if not hasattr(self, 'device_tab_widget') or index < 0:
@@ -976,7 +928,7 @@ class TestApplication(QWidget):
         elif selected_tab == "OPP":
             self.clear_layout(self.opp_tab_placeholder)
             layout = QVBoxLayout()
-            opp_tab = self.build_opp_tab()
+            opp_tab = self.build_opp_tab(self.device_address)
             layout.addWidget(opp_tab)
             self.opp_tab_placeholder.setLayout(layout)
             self.opp_tab_placeholder.update()
@@ -1225,8 +1177,18 @@ class TestApplication(QWidget):
         controller_name_layout = QHBoxLayout()
         controller_name_label = QLabel("Controller Name:")
         controller_name_label.setFont(bold_font)
+        controller_name_label.setStyleSheet("""
+                       border-top: 0px solid black;
+                       border-right: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
         controller_name_layout.addWidget(controller_name_label)
         controller_name_text = QLabel(self.bluez_logger.name)
+        controller_name_text.setStyleSheet("""
+                       border-top: 0px solid black;
+                       border-left: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
         controller_name_layout.addWidget(controller_name_text)
         controller_details_layout.addLayout(controller_name_layout)
 
@@ -1234,8 +1196,16 @@ class TestApplication(QWidget):
         controller_address_layout = QHBoxLayout()
         controller_address_label = QLabel("Controller Address:")
         controller_address_label.setFont(bold_font)
+        controller_address_label.setStyleSheet("""
+                       border-right: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
         controller_address_layout.addWidget(controller_address_label)
         controller_address_text = QLabel(self.bluez_logger.bd_address)
+        controller_address_text.setStyleSheet("""
+                       border-left: 1px solid black; 
+                       border-bottom: 0px solid black;
+                   """)
         controller_address_layout.addWidget(controller_address_text)
         controller_details_layout.addLayout(controller_address_layout)
 
@@ -1243,8 +1213,16 @@ class TestApplication(QWidget):
         controller_link_mode_layout = QHBoxLayout()
         controller_link_mode_label = QLabel("Link Mode:")
         controller_link_mode_label.setFont(bold_font)
+        controller_link_mode_label.setStyleSheet("""
+                       border-right: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
         controller_link_mode_layout.addWidget(controller_link_mode_label)
         controller_link_mode_text = QLabel(self.bluez_logger.link_mode)
+        controller_link_mode_text.setStyleSheet("""
+                       border-left: 1px solid black;  
+                       border-bottom: 0px solid black;
+                   """)
         controller_link_mode_layout.addWidget(controller_link_mode_text)
         controller_details_layout.addLayout(controller_link_mode_layout)
 
@@ -1252,8 +1230,16 @@ class TestApplication(QWidget):
         controller_link_policy_layout = QHBoxLayout()
         controller_link_policy_label = QLabel("Link Policy:")
         controller_link_policy_label.setFont(bold_font)
+        controller_link_policy_label.setStyleSheet("""
+                border-right: 1px solid black;
+                border-bottom: 0px solid black;
+            """)
         controller_link_policy_layout.addWidget(controller_link_policy_label)
         controller_link_policy_text = QLabel(self.bluez_logger.link_policy)
+        controller_link_policy_text.setStyleSheet("""  
+                border-left: 1px solid black;
+                border-bottom: 0px solid black;
+            """)
         controller_link_policy_layout.addWidget(controller_link_policy_text)
         controller_details_layout.addLayout(controller_link_policy_layout)
 
@@ -1261,8 +1247,16 @@ class TestApplication(QWidget):
         controller_hci_version_layout = QHBoxLayout()
         controller_hci_version_label = QLabel("HCI Version:")
         controller_hci_version_label.setFont(bold_font)
+        controller_hci_version_label.setStyleSheet("""
+                        border-right: 1px solid black;
+                        border-bottom: 0px solid black;
+                    """)
         controller_hci_version_layout.addWidget(controller_hci_version_label)
         controller_hci_version_text = QLabel(self.bluez_logger.hci_version)
+        controller_hci_version_text.setStyleSheet("""
+                        border-left: 1px solid black; 
+                        border-bottom: 0px solid black;
+                    """)
         controller_hci_version_layout.addWidget(controller_hci_version_text)
         controller_details_layout.addLayout(controller_hci_version_layout)
 
@@ -1270,8 +1264,16 @@ class TestApplication(QWidget):
         controller_lmp_version_layout = QHBoxLayout()
         controller_lmp_version_label = QLabel("LMP Version:")
         controller_lmp_version_label.setFont(bold_font)
+        controller_lmp_version_label.setStyleSheet("""
+                border-right: 1px solid black;
+                border-bottom: 0px solid black;
+            """)
         controller_lmp_version_layout.addWidget(controller_lmp_version_label)
         controller_lmp_version_text = QLabel(self.bluez_logger.lmp_version)
+        controller_lmp_version_text.setStyleSheet(""" 
+                       border-left: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
         controller_lmp_version_layout.addWidget(controller_lmp_version_text)
         controller_details_layout.addLayout(controller_lmp_version_layout)
 

@@ -52,29 +52,13 @@ class BluetoothDeviceManager:
 
     def power_on_adapter(self):
         """
-        Power on the local Bluetooth adapter using the Properties interface.
-        """
-        try:
-            obj = self.bus.get_object("org.bluez", self.adapter_path)
-            props_iface = dbus.Interface(obj, "org.freedesktop.DBus.Properties")
-            props_iface.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
-            print("Adapter powered on successfully.")
-
-        except dbus.exceptions.DBusException as e:
-            if "Method \"Set\" with signature \"ssb\" on interface \"org.freedesktop.DBus.Properties\" doesn't exist" in str(
-                    e):
-                print(f"Error: BlueZ D-Bus 'Set' method for Adapter1.Powered not found.")
-
-    '''
-    def power_on_adapter(self):
-        """
         Power on the local Bluetooth adapter.
         """
         adapter = dbus.Interface(
             self.bus.get_object("org.bluez", self.adapter_path),
             "org.freedesktop.DBus.Properties"
         )
-        adapter.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))'''
+        adapter.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
 
     def inquiry(self, timeout):
         """
@@ -114,7 +98,7 @@ class BluetoothDeviceManager:
 
 
     def find_device_path(self, address, interface):
-        adapter_path = f"/org/bluez/{interface}"
+        #adapter_path = f"/org/bluez/{interface}"
         om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
         objects = om.GetManagedObjects()
         formatted_address = address.replace(":", "_").upper()
@@ -160,38 +144,6 @@ class BluetoothDeviceManager:
                 print(f"Error disconnecting device {address}: {e}")
         return False
 
-    def unpair_device(self, address, interface):
-        """
-        Remove the bonded device from the system using the specified controller.
-
-        :param address: Bluetooth device MAC address.
-        :param interface: Controller interface (e.g., 'hci0', 'hci1')
-        :return: True if removed or already gone, False otherwise.
-        """
-        adapter_path = f"/org/bluez/{interface}"
-        print(adapter_path)
-        om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
-        objects = om.GetManagedObjects()
-
-        for path, interfaces in objects.items():
-            if "org.bluez.Device1" in interfaces:
-                props = interfaces["org.bluez.Device1"]
-                if props.get("Address") == address and props.get("Adapter") == adapter_path:
-                    try:
-                        adapter = dbus.Interface(
-                            self.bus.get_object("org.bluez", adapter_path),
-                            "org.bluez.Adapter1"
-                        )
-                        adapter.RemoveDevice(path)
-                        print(f"[Bluetooth] Removed device {address} on {interface}")
-                        return True
-                    except dbus.exceptions.DBusException as e:
-                        print(f"[Bluetooth] Failed to remove {address} on {interface}: {e}")
-                        return False
-
-        print(f"[Bluetooth] Device {address} not found on {interface}")
-        return True  # Considered success if already removed
-
     def remove_device(self, address, interface):
         adapter_path = f"/org/bluez/{interface}"
         obj = self.bus.get_object("org.bluez", "/")
@@ -215,6 +167,7 @@ class BluetoothDeviceManager:
         print(f"Device with address {address} not found on {interface}")
         return True  # already removed
 
+
     def le_connect(self, address, interface):
         device_path = self.find_device_path(address, interface)
         if device_path:
@@ -223,9 +176,10 @@ class BluetoothDeviceManager:
                     self.bus.get_object("org.bluez", device_path),
                     dbus_interface="org.bluez.Device1"
                 )
-                device.ConnectProfile('0000110e-0000-1000-8000-00805f9b34fb')  # A2DP
+                device.ConnectProfile('0000110e-0000-1000-8000-00805f9b34fb')
             except Exception as e:
                 print("LE Connection failed:", e)
+
     def _get_device_interface(self, device_path):
         """
         Get the org.bluez.Device1 interface for the specified device path.
@@ -271,124 +225,6 @@ class BluetoothDeviceManager:
             print(f"[Bluetooth] Device path not found for {address} on {interface}")
             return False
 
-    '''
-    def br_edr_connect(self, address):
-        """
-        Establish a BR/EDR connection to the specified Bluetooth device.
-
-        :param address: Bluetooth device MAC address.
-        :return: True if connected, False otherwise.
-        """
-        device_path = self.find_device_path(address)
-        if device_path:
-            try:
-                device = dbus.Interface(self.bus.get_object("org.bluez", device_path),
-                                        dbus_interface="org.bluez.Device1")
-                device.Connect()
-
-                props = dbus.Interface(self.bus.get_object("org.bluez", device_path),
-                                       "org.freedesktop.DBus.Properties")
-                connected = props.Get("org.bluez.Device1", "Connected")
-                if connected:
-                    print("Connection is successful")
-                    return True
-                else:
-                    print("Connection attempted but not confirmed")
-                    return False
-            except Exception as e:
-                print(f"Connection failed: {e}")
-                return False
-        else:
-            print("Device path not found for connection")
-            return False
-
-
-    def disconnect_le_device(self, address):
-        """
-        Disconnect a Bluetooth LE device using BlueZ D-Bus interface.
-
-        :param address: Bluetooth MAC address (e.g., 'C0:26:DA:00:12:34')
-        :return: True if disconnect successful or not connected, False otherwise.
-        """
-        try:
-            device_path = self._get_device_path(address)
-
-            # Access device and its properties
-            device = dbus.Interface(self.bus.get_object("org.bluez", device_path), "org.bluez.Device1")
-            props = dbus.Interface(self.bus.get_object("org.bluez", device_path), "org.freedesktop.DBus.Properties")
-
-            # Check if already disconnected
-            connected = props.Get("org.bluez.Device1", "Connected")
-            if not connected:
-                print(f"[BluetoothDeviceManager] Device {address} is already disconnected.")
-                return True
-
-            # Perform disconnect
-            print(f"[BluetoothDeviceManager] Disconnecting device {address}...")
-            device.Disconnect()
-            #time.sleep(1)  # Optional: allow async operations to complete
-
-            print(f"[BluetoothDeviceManager] Device {address} disconnected successfully.")
-            return True
-
-        except dbus.exceptions.DBusException as e:
-            print(f"[BluetoothDeviceManager] Error disconnecting device {address}: {e}")
-            return False
-
-    def remove_device(self, address):
-        """
-        Remove the bonded device from the system.
-
-        :param address: Bluetooth device MAC address.
-        :return: True if removed or already gone, False otherwise.
-        """
-        obj = self.bus.get_object("org.bluez", "/")
-        manager = dbus.Interface(obj, "org.freedesktop.DBus.ObjectManager")
-        objects = manager.GetManagedObjects()
-
-        for path, interfaces in objects.items():
-            if "org.bluez.Device1" in interfaces:
-                if interfaces["org.bluez.Device1"].get("Address") == address:
-                    print(f"[BluetoothDeviceManager] Removing device {path}")
-                    try:
-                        adapter = dbus.Interface(
-                            self.bus.get_object("org.bluez", self.adapter_path),
-                            "org.bluez.Adapter1"
-                        )
-                        adapter.RemoveDevice(path)
-                        return True
-                    except dbus.exceptions.DBusException as e:
-                        if "org.freedesktop.DBus.Error.UnknownObject" in str(e):
-                            print(f"[BluetoothDeviceManager] Device {address} already removed")
-                            return True  # Still a success
-                        else:
-                            print(f"[BluetoothDeviceManager] Failed to remove {address}: {e}")
-                            return False
-
-        print(f"[BluetoothDeviceManager] Device with address {address} not found")
-        return True  # Treat as success since it's already not present
-
-
-    def le_connect(self, address):
-        """
-        Initiates Low Energy (LE) connection using a specific profile.
-
-        Args:
-            address (str): Bluetooth MAC address.
-        returns:
-            None
-        """
-        device_path = self.find_device_path(address)
-        if device_path:
-            try:
-                device = dbus.Interface(
-                    self.bus.get_object("org.bluez", device_path),
-                    dbus_interface="org.bluez.Device1"
-                )
-                device.ConnectProfile('0000110e-0000-1000-8000-00805f9b34fb')  # HID Profile
-            except Exception as e:
-                print("LE Connection has failed:", e)
-    '''
     def set_discoverable_on(self):
         """
         Makes the Bluetooth device discoverable.
@@ -446,19 +282,28 @@ class BluetoothDeviceManager:
         Returns:
             bool: True if connected, False otherwise.
         """
-        device_path = self.find_device_path(device_address,interface=self.interface)
+        device_path = self.find_device_path(device_address, interface=self.interface)
         if not device_path:
+            print(f"[DEBUG] Device path not found for {device_address} on {self.interface}")
             return False
 
-        props = dbus.Interface(
-            self.bus.get_object("org.bluez", device_path),
-            "org.freedesktop.DBus.Properties"
-        )
         try:
-            return props.Get("org.bluez.Device1", "Connected")
-        except dbus.exceptions.DBusException:
-            return False
+            props = dbus.Interface(
+                self.bus.get_object("org.bluez", device_path),
+                "org.freedesktop.DBus.Properties"
+            )
+            connected = props.Get("org.bluez.Device1", "Connected")
 
+            # Extra validation: make sure device is under the correct adapter/interface
+            if self.interface not in device_path:
+                print(f"[DEBUG] Device path {device_path} does not match interface {self.interface}")
+                return False
+
+            return connected
+
+        except dbus.exceptions.DBusException as e:
+            print(f"[DEBUG] DBusException while checking connection: {e}")
+            return False
     def refresh_device_list(self):
         """
         Updates the internal device list with currently available devices.
@@ -687,7 +532,7 @@ class BluetoothDeviceManager:
 
     def start_a2dp_stream(self, address, filepath=None):
         device_path = self.find_device_path(address,interface=self.interface)
-        print(device_path)
+
         if not device_path:
             return "Device not found"
         try:
@@ -702,6 +547,14 @@ class BluetoothDeviceManager:
             print(f"[A2DP] Connected to {address}")
             if not filepath:
                 return "No audio file specified for streaming"
+
+            # Convert MP3 to WAV if needed
+            if filepath.endswith(".mp3"):
+                wav_file = "/tmp/temp_audio.wav"
+                if not self.convert_mp3_to_wav(filepath, wav_file):
+                    return False
+                filepath = wav_file
+
             self.stream_process = subprocess.Popen(
                 ["aplay", filepath],
                 stdout=subprocess.PIPE,
@@ -710,6 +563,25 @@ class BluetoothDeviceManager:
             return f"Streaming started with {filepath}"
         except Exception as e:
             return f"A2DP stream error: {str(e)}"
+
+
+    def convert_mp3_to_wav(self, audio_path, wav_path):
+        """
+        Convert an MP3 file to WAV format using ffmpeg.
+
+        Args:
+            audio_path (str): Path to the MP3 file.
+            wav_path (str): Output path for the converted WAV file.
+
+        Returns:
+            bool: True if conversion succeeds, False otherwise.
+        """
+        try:
+            subprocess.run(['ffmpeg', '-y', '-i', audio_path, wav_path], check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Conversion failed [mp3 to wav]: {e}")
+            return False
 
     def stop_a2dp_stream(self):
         """
@@ -809,67 +681,3 @@ class BluetoothDeviceManager:
                     return f"Error sending AVRCP {command}: {str(e)}"
 
         return f"No MediaControl1 interface found under {self.interface} (is device connected via A2DP with AVRCP?)"
-
-    '''def get_connected_a2dp_sink_devices(self):
-        """
-        Get a list of currently connected A2DP sink devices.
-
-        args: None
-        Returns:
-            dict: Dictionary of connected device MAC addresses and their names.
-        """
-        self.refresh_device_list()
-        return {
-            addr: dev["Name"]
-            for addr, dev in self.devices.items()
-            if dev["Connected"] and any("110b" in uuid.lower() for uuid in dev["UUIDs"])
-        }
-
-    def get_connected_a2dp_source_devices(self):
-        """
-        Get a list of currently connected A2DP source devices.
-
-        args: None
-        Returns:
-            dict: Dictionary of connected device MAC addresses and their names.
-        """
-        self.refresh_device_list()
-        return {
-            addr: dev["Name"]
-            for addr, dev in self.devices.items()
-            if dev["Connected"] and any("110a" in uuid.lower() for uuid in dev["UUIDs"])
-        }
-
-
-    def media_control(self, command):
-        """
-        Send an AVRCP media control command to a connected A2DP device.
-
-        Supported commands: play, pause, next, previous, rewind.
-
-        :param command: The command to send as a string.
-        :return: Result message.
-        """
-        valid = {
-            "play": "Play",
-            "pause": "Pause",
-            "next": "Next",
-            "previous": "Previous",
-            "rewind": "FastRewind"
-        }
-
-        if command not in valid:
-            return f"Invalid command: {command}"
-
-        om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
-        objects = om.GetManagedObjects()
-
-        for path, interfaces in objects.items():
-            if "org.bluez.MediaControl1" in interfaces:
-                try:
-                    control_iface = dbus.Interface(self.bus.get_object("org.bluez", path), "org.bluez.MediaControl1")
-                    getattr(control_iface, valid[command])()
-                    return f"AVRCP {command} sent to {path}"
-                except Exception as e:
-                    return f"Error sending AVRCP {command}: {str(e)}"
-        return "No MediaControl1 interface found (is device connected as A2DP Source with AVRCP?)" '''
