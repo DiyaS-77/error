@@ -257,17 +257,20 @@
 
         self.bluetoothd_log_text_browser.setStyleSheet(transparent_textedit_style)
         self.pulseaudio_log_text_browser.setStyleSheet(transparent_textedit_style)
-        self.hci_dump_log_text_browser.setStyleSheet(transparent_textedit_style)
+        self.hci_dump_log_text_browser.setStyleSheet(transparent_textedit_style)  # Get log file paths from bluez_logger (BluetoothDeviceManager)
+        self.bluetoothd_log_file = self.bluez_logger.start_bluetoothd_logs()
+        self.pulseaudio_log_file = self.bluez_logger.start_pulseaudio_logs()
+        self.hcidump_log_file = self.bluez_logger.start_dump_logs(interface=self.interface)
 
-        # Start bluetoothd logs
-        self.bluez_logger.start_bluetoothd_logs(self.bluetoothd_log_text_browser)
+        # Track positions for file reading
+        self.bluetoothd_pos = 0
+        self.pulseaudio_pos = 0
+        self.hcidump_pos = 0
 
-        # Start pulseaudio logs
+        # Periodically update logs
+        QTimer.singleShot(1000, self.read_logs_periodically)
 
-        self.bluez_logger.start_pulseaudio_logs(self.pulseaudio_log_text_browser)
 
-        # Start HCI dump logs
-        self.bluez_logger.start_dump_logs(interface=self.interface,log_text_browser=self.hci_dump_log_text_browser)
 
         # Set the main layout for the test application window
 
@@ -298,3 +301,22 @@
 
         self.setLayout(self.main_grid_layout)
         QTimer.singleShot(1000, self.load_connected_devices)
+
+def read_logs_periodically(self):
+    self._read_log(self.bluetoothd_log_file, self.bluetoothd_log_text_browser, 'bluetoothd_pos')
+    self._read_log(self.pulseaudio_log_file, self.pulseaudio_log_text_browser, 'pulseaudio_pos')
+    self._read_log(self.hcidump_log_file, self.hci_dump_log_text_browser, 'hcidump_pos')
+    QTimer.singleShot(1000, self.read_logs_periodically)
+
+def _read_log(self, log_file_path, text_browser, pos_attr):
+    try:
+        with open(log_file_path, "r") as f:
+            f.seek(getattr(self, pos_attr))
+            new_logs = f.read()
+            if new_logs:
+                text_browser.append(new_logs)
+                text_browser.verticalScrollBar().setValue(text_browser.verticalScrollBar().maximum())
+            setattr(self, pos_attr, f.tell())
+    except Exception as e:
+        print(f"[LOG READ ERROR] {log_file_path}: {e}")
+
