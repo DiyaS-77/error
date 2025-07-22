@@ -1,0 +1,300 @@
+  def test_application_clicked(self):
+        """
+           Create and display the main testing application GUI.
+
+           This interface consists of:
+           - A profile selection list
+           - Bluetooth controller details
+           - A text browser showing methods related to selected profile
+           - Three log viewers: Bluetoothd, PulseAudio, and HCI Dump
+           - A back button to return to the previous window
+
+           args: None
+           returns: None
+           """
+
+        self.bluetooth_device_manager=BluetoothDeviceManager(self.interface)
+        self.bluez_logger=BluetoothDeviceManager(log_path=self.log_path)
+        self.restart_daemons()
+
+        # Create the main grid
+        self.main_grid_layout = QGridLayout()
+
+        # Grid 1 Up : List of Profiles
+        bold_font = QFont()
+        bold_font.setBold(True)
+        self.profiles_list_widget = QListWidget()
+        self.profiles_list_label = QLabel("List of Profiles:")
+        self.profiles_list_label.setFont(bold_font)
+        self.profiles_list_label.setStyleSheet("color:black")
+        self.main_grid_layout.addWidget(self.profiles_list_label, 0, 0)
+        self.profiles_list_widget.addItem("GAP")
+        self.profiles_list_widget.setFont(bold_font)
+        self.profiles_list_widget.setStyleSheet("border: 2px solid black;" "color: black;" "background: transparent;")
+
+        self.profiles_list_widget.itemSelectionChanged.connect(self.profile_selected)
+
+        self.profiles_list_widget.setFixedWidth(350)
+        self.main_grid_layout.addWidget(self.profiles_list_widget, 1, 0, 2, 2)
+
+        # Grid 1 Down : Controller Details
+        controller_details_widget = QWidget()
+        controller_details_layout = QVBoxLayout()
+        controller_details_widget.setStyleSheet("color: blue;")
+        controller_details_widget.setFont(bold_font)
+        controller_details_widget.setStyleSheet("border: 2px solid black;" "color: black;" "background: transparent;")
+        self.main_grid_layout.addWidget(controller_details_widget, 3, 0, 8, 2)
+        controller_details_layout.setContentsMargins(0, 0, 0, 0)
+        controller_details_layout.setSpacing(0)
+
+        self.bluez_logger.get_controller_details(interface=self.interface)
+
+        self.controller.name = self.bluez_logger.name
+        self.controller.bd_address = self.bluez_logger.bd_address
+        self.controller.link_policy = self.bluez_logger.link_policy
+        self.controller.lmp_version = self.bluez_logger.lmp_version
+        self.controller.link_mode = self.bluez_logger.link_mode
+        self.controller.hci_version = self.bluez_logger.hci_version
+        self.controller.manufacturer = self.bluez_logger.manufacturer
+
+        controller_details_label = QLabel("Controller Details:")
+
+        controller_details_label.setFont(bold_font)
+        controller_details_layout.addWidget(controller_details_label)
+
+        # Controller Name
+        controller_name_layout = QHBoxLayout()
+        controller_name_label = QLabel("Controller Name:")
+        controller_name_label.setFont(bold_font)
+        controller_name_label.setStyleSheet("""
+                       border-top: 0px solid black;
+                       border-right: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
+        controller_name_layout.addWidget(controller_name_label)
+        controller_name_text = QLabel(self.bluez_logger.name)
+        controller_name_text.setStyleSheet("""
+                       border-top: 0px solid black;
+                       border-left: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
+        controller_name_layout.addWidget(controller_name_text)
+        controller_details_layout.addLayout(controller_name_layout)
+
+        # Controller Address
+        controller_address_layout = QHBoxLayout()
+        controller_address_label = QLabel("Controller Address:")
+        controller_address_label.setFont(bold_font)
+        controller_address_label.setStyleSheet("""
+                       border-right: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
+        controller_address_layout.addWidget(controller_address_label)
+        controller_address_text = QLabel(self.bluez_logger.bd_address)
+        controller_address_text.setStyleSheet("""
+                       border-left: 1px solid black; 
+                       border-bottom: 0px solid black;
+                   """)
+        controller_address_layout.addWidget(controller_address_text)
+        controller_details_layout.addLayout(controller_address_layout)
+
+        # Link Mode
+        controller_link_mode_layout = QHBoxLayout()
+        controller_link_mode_label = QLabel("Link Mode:")
+        controller_link_mode_label.setFont(bold_font)
+        controller_link_mode_label.setStyleSheet("""
+                       border-right: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
+        controller_link_mode_layout.addWidget(controller_link_mode_label)
+        controller_link_mode_text = QLabel(self.bluez_logger.link_mode)
+        controller_link_mode_text.setStyleSheet("""
+                       border-left: 1px solid black;  
+                       border-bottom: 0px solid black;
+                   """)
+        controller_link_mode_layout.addWidget(controller_link_mode_text)
+        controller_details_layout.addLayout(controller_link_mode_layout)
+
+        # Link Policy
+        controller_link_policy_layout = QHBoxLayout()
+        controller_link_policy_label = QLabel("Link Policy:")
+        controller_link_policy_label.setFont(bold_font)
+        controller_link_policy_label.setStyleSheet("""
+                border-right: 1px solid black;
+                border-bottom: 0px solid black;
+            """)
+        controller_link_policy_layout.addWidget(controller_link_policy_label)
+        controller_link_policy_text = QLabel(self.bluez_logger.link_policy)
+        controller_link_policy_text.setStyleSheet("""  
+                border-left: 1px solid black;
+                border-bottom: 0px solid black;
+            """)
+        controller_link_policy_layout.addWidget(controller_link_policy_text)
+        controller_details_layout.addLayout(controller_link_policy_layout)
+
+        # HCI Version
+        controller_hci_version_layout = QHBoxLayout()
+        controller_hci_version_label = QLabel("HCI Version:")
+        controller_hci_version_label.setFont(bold_font)
+        controller_hci_version_label.setStyleSheet("""
+                        border-right: 1px solid black;
+                        border-bottom: 0px solid black;
+                    """)
+        controller_hci_version_layout.addWidget(controller_hci_version_label)
+        controller_hci_version_text = QLabel(self.bluez_logger.hci_version)
+        controller_hci_version_text.setStyleSheet("""
+                        border-left: 1px solid black; 
+                        border-bottom: 0px solid black;
+                    """)
+        controller_hci_version_layout.addWidget(controller_hci_version_text)
+        controller_details_layout.addLayout(controller_hci_version_layout)
+
+        # LMP Version
+        controller_lmp_version_layout = QHBoxLayout()
+        controller_lmp_version_label = QLabel("LMP Version:")
+        controller_lmp_version_label.setFont(bold_font)
+        controller_lmp_version_label.setStyleSheet("""
+                border-right: 1px solid black;
+                border-bottom: 0px solid black;
+            """)
+        controller_lmp_version_layout.addWidget(controller_lmp_version_label)
+        controller_lmp_version_text = QLabel(self.bluez_logger.lmp_version)
+        controller_lmp_version_text.setStyleSheet(""" 
+                       border-left: 1px solid black;
+                       border-bottom: 0px solid black;
+                   """)
+        controller_lmp_version_layout.addWidget(controller_lmp_version_text)
+        controller_details_layout.addLayout(controller_lmp_version_layout)
+
+        # Manufacturer
+        controller_manufacturer_layout = QHBoxLayout()
+        controller_manufacturer_label = QLabel("Manufacturer:")
+        controller_manufacturer_label.setFont(bold_font)
+        controller_manufacturer_label.setFixedWidth(350)
+        controller_manufacturer_layout.addWidget(controller_manufacturer_label)
+        controller_manufacturer_text = QLabel(self.bluez_logger.manufacturer)
+        controller_manufacturer_layout.addWidget(controller_manufacturer_text)
+        controller_details_layout.addLayout(controller_manufacturer_layout)
+
+        # Setting the controller details widget with fixedwidth being mentioned
+        controller_details_widget.setLayout(controller_details_layout)
+        controller_details_widget.setFixedWidth(350)
+
+        # Grid2: Profile description
+        profile_description_label = QLabel("Profile Methods or Procedures:")
+        profile_description_label.setFont(bold_font)
+        profile_description_label.setStyleSheet("color: black;")
+
+        self.main_grid_layout.addWidget(profile_description_label, 0, 2)
+        self.profile_description_text_browser = QTextBrowser()
+        #self.profile_description_text_browser.setMaximumWidth(500)
+        self.main_grid_layout.addWidget(self.profile_description_text_browser, 1, 2, 10, 2)
+        self.profile_description_text_browser.setStyleSheet(
+            "background: transparent;color:black;border: 2px solid black;")
+        self.profile_description_text_browser.setFixedWidth(500)
+
+        # Grid3: HCI Dump Logs
+        dump_logs_label = QLabel("Dump Logs:")
+        dump_logs_label.setFont(bold_font)
+        dump_logs_label.setStyleSheet("color: black;")
+        self.main_grid_layout.addWidget(dump_logs_label, 0, 4)
+        self.dump_logs_text_browser = QTabWidget()
+        self.main_grid_layout.addWidget(self.dump_logs_text_browser, 1, 4, 10, 2)
+        self.dump_logs_text_browser.setStyleSheet("""
+            QTabWidget::pane {
+                background: transparent;
+                border: 2px solid black;
+                margin-top: 8px; 
+
+            }
+            QTabBar::tab {
+                background: transparent;
+                color: black;
+                border-top: 2px solid black;
+                border-bottom: 2px solid black;
+                border-left: 2px solid black;
+                border-right: none;
+                padding: 7px;
+                height: 20px;  /* Fixed tab height */
+            }
+
+            QTabBar::tab:last {
+            border-right: 2px solid black;  /* Add right border to last tab only */
+            }
+        """)
+
+        tab_bar = self.dump_logs_text_browser.tabBar()
+        tab_bar.setUsesScrollButtons(False)
+        tab_bar.setExpanding(True)
+        self.dump_logs_text_browser.setFixedWidth(400)
+
+        self.bluetoothd_log_text_browser = QTextEdit()
+        self.bluetoothd_log_text_browser.setFont(bold_font)
+        self.bluetoothd_log_text_browser.setMinimumWidth(50)
+        self.bluetoothd_log_text_browser.setReadOnly(True)
+
+        self.pulseaudio_log_text_browser = QTextEdit()
+        self.pulseaudio_log_text_browser.setFont(bold_font)
+        self.pulseaudio_log_text_browser.setMinimumWidth(50)
+        self.pulseaudio_log_text_browser.setReadOnly(True)
+
+        self.hci_dump_log_text_browser = QTextEdit()
+        self.hci_dump_log_text_browser.setFont(bold_font)
+        self.hci_dump_log_text_browser.setMinimumWidth(50)
+        self.hci_dump_log_text_browser.setReadOnly(True)
+
+        self.dump_logs_text_browser.addTab(self.bluetoothd_log_text_browser, "Bluetoothd_Logs")
+        self.dump_logs_text_browser.addTab(self.pulseaudio_log_text_browser, "Pulseaudio_Logs")
+        self.dump_logs_text_browser.addTab(self.hci_dump_log_text_browser, "HCI_Dump_Logs")
+
+        transparent_textedit_style = """
+            QTextEdit {
+                background: transparent;
+                color: black;
+                border: none;
+            }
+        """
+
+        self.bluetoothd_log_text_browser.setStyleSheet(transparent_textedit_style)
+        self.pulseaudio_log_text_browser.setStyleSheet(transparent_textedit_style)
+        self.hci_dump_log_text_browser.setStyleSheet(transparent_textedit_style)
+
+        # Start bluetoothd logs
+        self.bluez_logger.start_bluetoothd_logs(self.bluetoothd_log_text_browser)
+
+        # Start pulseaudio logs
+
+        self.bluez_logger.start_pulseaudio_logs(self.pulseaudio_log_text_browser)
+
+        # Start HCI dump logs
+        self.bluez_logger.start_dump_logs(interface=self.interface,log_text_browser=self.hci_dump_log_text_browser)
+
+        # Set the main layout for the test application window
+
+        back_button = QPushButton("Back")
+        back_button.setFixedSize(100, 40)
+        back_button.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                padding: 6px;
+                background-color: black;
+                color: white;
+                border: 2px solid gray;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #333333;
+            }
+        """)
+
+        #back_button.clicked.connect(self.back_callback)
+        back_button.clicked.connect(lambda: self.back_callback())
+
+        # Create horizontal layout to hold back button
+        back_button_layout = QHBoxLayout()
+        back_button_layout.addWidget(back_button)
+        back_button_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.main_grid_layout.addLayout(back_button_layout, 999, 5)
+
+        self.setLayout(self.main_grid_layout)
+        QTimer.singleShot(1000, self.load_connected_devices)
