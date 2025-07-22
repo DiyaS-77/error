@@ -226,7 +226,7 @@ class BluetoothDeviceManager:
         self.dbus_process = subprocess.Popen(dbus_command, shell=True)
         print("D-Bus service started successfully.")
 
-    def start_bluetoothd_logs(self, log_text_browser=None):
+    def start_bluetoothd_logs(self):
         self.bluetoothd_log_name = os.path.join(self.log_path, "bluetoothd.log")
         subprocess.run("pkill -f bluetoothd", shell=True)
 
@@ -241,7 +241,7 @@ class BluetoothDeviceManager:
         )
 
         print(f"[INFO] Bluetoothd logs started: {self.bluetoothd_log_name}")
-        return True
+        return self.bluetoothd_log_name
 
     def start_pulseaudio_logs(self, log_text_browser=None):
         self.pulseaudio_log_name = os.path.join(self.log_path, "pulseaudio.log")
@@ -258,7 +258,7 @@ class BluetoothDeviceManager:
         )
 
         print(f"[INFO] Pulseaudio logs started: {self.pulseaudio_log_name}")
-        return True
+        return self.pulseaudio_log_name
 
     def stop_bluetoothd_logs(self):
         print("[INFO] Stopping bluetoothd logs...")
@@ -303,7 +303,7 @@ class BluetoothDeviceManager:
             )
 
             print(f"[INFO] hcidump process started: {self.hcidump_log_name}")
-            return True
+            return self.hcidump_log_name
 
         except Exception as e:
             print(f"[ERROR] Failed to start hcidump: {e}")
