@@ -7,11 +7,7 @@ import subprocess
 import time
 import logging
 
-from PyQt6 import sip
 from logger import Logger
-
-from PyQt6.QtCore import QFileSystemWatcher
-from PyQt6.QtWidgets import QTextBrowser
 from Backend_lib.Linux import hci_commands as hci
 from utils import run
 
@@ -60,28 +56,13 @@ class BluetoothDeviceManager:
         self.log_path = log_path
         if self.log_path:
             self.log = Logger("UI")
-
             self.bluetoothd_process = None
             self.pulseaudio_process = None
             self.hcidump_process = None
-
-            self.bluetoothd_watcher = None
-            self.pulseaudio_watcher = None
-            self.hci_watcher = None
-
-            self.bluetoothd_logfile_fd = None
-            self.pulseaudio_logfile_fd = None
-            self.logfile_fd = None
-
             self.bluetoothd_log_name = None
             self.pulseaudio_log_name = None
             self.hcidump_log_name = None
-
             self.interface = None
-
-            self._watchers = {}  # Track QFileSystemWatcher per file
-            self._last_positions = {}  # Track last read position per file
-
 
 #---------CONTROLLER DETAILS----------------------#
     def get_controllers_connected(self):
@@ -259,9 +240,6 @@ class BluetoothDeviceManager:
             universal_newlines=True
         )
 
-        if log_text_browser:
-            self._watch_log_file(self.bluetoothd_log_name, log_text_browser)
-
         print(f"[INFO] Bluetoothd logs started: {self.bluetoothd_log_name}")
         return True
 
@@ -278,9 +256,6 @@ class BluetoothDeviceManager:
             bufsize=1,
             universal_newlines=True
         )
-
-        if log_text_browser:
-            self._watch_log_file(self.pulseaudio_log_name, log_text_browser)
 
         print(f"[INFO] Pulseaudio logs started: {self.pulseaudio_log_name}")
         return True
@@ -326,9 +301,6 @@ class BluetoothDeviceManager:
                 bufsize=1,
                 universal_newlines=True
             )
-
-            #if log_text_browser:
-             #   self._watch_log_file(self.hcidump_log_name, log_text_browser)
 
             print(f"[INFO] hcidump process started: {self.hcidump_log_name}")
             return True
