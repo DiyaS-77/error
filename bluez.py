@@ -2,15 +2,25 @@ import dbus
 import dbus.service
 import dbus.mainloop.glib
 import os
+import re
 import subprocess
 import time
+import logging
+
+from PyQt6 import sip
+from logger import Logger
+
+from PyQt6.QtCore import QFileSystemWatcher
+from PyQt6.QtWidgets import QTextBrowser
+from Backend_lib.Linux import hci_commands as hci
+from utils import run
+
 from gi.repository import GObject
-import mimetypes
-from dbus.mainloop.glib import DBusGMainLoop
 
 # Set the D-Bus main loop
 dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 class BluetoothDeviceManager:
     """
@@ -20,23 +30,374 @@ class BluetoothDeviceManager:
     streaming audio (A2DP), media control (AVRCP), and removing Bluetooth devices.
     """
 
-    def __init__(self,interface=None):
+    def __init__(self,interface=None,log=None,log_path=None):
         """
         Initialize the BluetoothDeviceManager by setting up the system bus and adapter.
         """
         self.interface = interface
-        self.bus = dbus.SystemBus()
-        self.adapter_path = f'/org/bluez/{self.interface}'
-        self.adapter_proxy = self.bus.get_object('org.bluez', self.adapter_path)
-        self.adapter = dbus.Interface(self.adapter_proxy, 'org.bluez.Adapter1')
-        self.device_address=None
-        self.stream_process = None
-        self.device_path = None
-        self.device_address = None
-        self.device_sink = None
-        self.devices = {}
-        self.last_session_path = None
-        self.opp_process = None
+        if self.interface:
+            self.bus = dbus.SystemBus()
+            self.adapter_path = f'/org/bluez/{self.interface}'
+            self.adapter_proxy = self.bus.get_object('org.bluez', self.adapter_path)
+            self.adapter = dbus.Interface(self.adapter_proxy, 'org.bluez.Adapter1')
+            self.device_address=None
+            self.stream_process = None
+            self.device_path = None
+            self.device_address = None
+            self.device_sink = None
+            self.devices = {}
+            self.last_session_path = None
+            self.opp_process = None
+
+        self.log=log
+        if self.log:
+            self.bd_address = None
+            self.controllers_list = {}
+            self.handles = None
+            self.interface = None
+            self.log_path = None
+
+        self.log_path = log_path
+        if self.log_path:
+            self.log = Logger("UI")
+
+            self.bluetoothd_process = None
+            self.pulseaudio_process = None
+            self.hcidump_process = None
+
+            self.bluetoothd_watcher = None
+            self.pulseaudio_watcher = None
+            self.hci_watcher = None
+
+            self.bluetoothd_logfile_fd = None
+            self.pulseaudio_logfile_fd = None
+            self.logfile_fd = None
+
+            self.bluetoothd_log_name = None
+            self.pulseaudio_log_name = None
+            self.hcidump_log_name = None
+
+            self.interface = None
+
+            self._watchers = {}  # Track QFileSystemWatcher per file
+            self._last_positions = {}  # Track last read position per file
+
+
+#---------CONTROLLER DETAILS----------------------#
+    def get_controllers_connected(self):
+        """
+        Returns the list of controllers connected to the host.
+
+        args : None
+        Returns:
+            dict: Dictionary with BD address as key and interface as value.
+        """
+        result = run(self.log, 'hciconfig -a | grep -B 2 \"BD A\"')
+        result = result.stdout.split("--")
+        if result[0]:
+            for res in result:
+                res = res.strip("\n").replace('\n', '')
+                if match := re.match('(.*):	Type:.+BD Address: (.*)  ACL(.*)', res):
+                    self.controllers_list[match[2]] = match[1]
+        self.log.info("Controllers {} found on host".format(self.controllers_list))
+        return self.controllers_list
+
+    def get_controller_interface_details(self):
+        """
+        Gets the controller's interface and bus details.
+
+        args: None
+        Returns:
+            str: Interface and Bus information.
+        """
+        self.interface = self.controllers_list[self.bd_address]
+        result = run(self.log, f"hciconfig -a {self.interface} | grep Bus")
+        return f"Interface: {self.interface} \t Bus: {result.stdout.split('Bus:')[1].strip()}"
+
+    def convert_mac_little_endian(self, address):
+        """
+        Converts MAC (BD) address to little-endian format.
+
+        Args:
+            address (str): BD address in normal format (e.g., 'AA:BB:CC:DD:EE:FF').
+
+        Returns:
+            str: BD address in little-endian format (e.g., 'FF EE DD CC BB AA').
+        """
+        addr = address.split(':')
+        addr.reverse()
+        return ' '.join(addr)
+
+    def convert_to_little_endian(self, num, num_of_octets):
+        """
+        Converts a number to little-endian hexadecimal representation.
+
+        Args:
+            num (int or str): Number to be converted.
+            num_of_octets (int): Number of octets to format the result.
+
+        Returns:
+            str: Little-endian formatted hex string.
+        """
+        data = None
+        if isinstance(num, str) and '0x' in num:
+            data = num.replace("0x", "")
+        elif isinstance(num, str) and '0x' not in num:
+            data = int(num)
+            data = str(hex(data)).replace("0x", "")
+        elif isinstance(num, int):
+            data = str(hex(num)).replace("0x", "")
+        while True:
+            if len(data) == (num_of_octets * 2):
+                break
+            data = "0" + data
+        out = [(data[i:i + 2]) for i in range(0, len(data), 2)]
+        out.reverse()
+        return ' '.join(out)
+
+    def run_hci_cmd(self, ogf, command, parameters=None):
+        """
+        Executes an HCI command with provided parameters.
+
+        Args:
+            ogf (str): Opcode Group Field (e.g., '0x03').
+            command (str): Specific HCI command name.
+            parameters (list): List of parameters for the command.
+
+        Returns:
+            subprocess.CompletedProcess: Result of command execution.
+        """
+        _ogf = ogf.lower().replace(' ', '_')
+        _ocf_info = getattr(hci, _ogf)[command]
+        hci_command = 'hcitool -i {} cmd {} {}'.format(self.interface, hci.hci_commands[ogf], _ocf_info[0])
+        for index in range(len(parameters)):
+            param_len = list(_ocf_info[1][index].values())[1] if len(
+                _ocf_info[1][index].values()) > 1 else None
+            if param_len:
+                parameter = self.convert_to_little_endian(parameters[index], param_len)
+            else:
+                parameter = parameters[index].replace('0x', '')
+            hci_command = ' '.join([hci_command, parameter])
+        self.log.info(f"Executing command: {hci_command}")
+        return run(self.log, hci_command)
+
+    def get_connection_handles(self):
+        """
+        Retrieves active Bluetooth connection handles for the current interface.
+
+        args: None
+        Returns:
+            dict: Dictionary of connection handles with hex values.
+        """
+        hcitool_con_cmd = f"hcitool -i {self.interface} con"
+        self.handles = {}
+        result = run(self.log, hcitool_con_cmd)
+        results = result.stdout.split('\n')
+        for line in results:
+            if 'handle' in line:
+                handle = (line.strip().split('state')[0]).replace('< ', '').strip()
+                self.handles[handle] = hex(int(handle.split(' ')[-1]))
+        return self.handles
+
+
+    def run_command(self, command, log_file=None):
+        output = subprocess.run(command, shell=True, capture_output=True, text=True)
+        logging.info(f"Command: {command}\nOutput: {output.stdout}")
+        return output
+
+#-------------LOGGING------------------------#
+    def _watch_log_file(self, log_file, text_browser: QTextBrowser):
+        if not log_file or not os.path.exists(log_file) or not text_browser:
+            return
+
+        if log_file in self._watchers:
+            return
+
+        watcher = QFileSystemWatcher()
+        watcher.addPath(log_file)
+        watcher.fileChanged.connect(lambda: self._read_new_logs(log_file, text_browser))
+        self._watchers[log_file] = watcher
+        self._last_positions[log_file] = 0
+
+    def _read_new_logs(self, log_file, text_browser):
+        try:
+            if text_browser is None or sip.isdeleted(text_browser):
+                return
+
+            last_pos = self._last_positions.get(log_file, 0)
+
+            with open(log_file, 'r') as f:
+                f.seek(last_pos)
+                new_logs = f.read()
+                if new_logs:
+                    text_browser.append(new_logs)
+                    text_browser.verticalScrollBar().setValue(
+                        text_browser.verticalScrollBar().maximum()
+                    )
+                self._last_positions[log_file] = f.tell()
+
+        except Exception as e:
+            print(f"[ERROR] Failed to read log file: {e}")
+
+    def start_dbus_service(self):
+        print("Starting D-Bus service...")
+        dbus_command = "/usr/local/bluez/dbus-1.12.20/bin/dbus-daemon --system --nopidfile"
+        self.dbus_process = subprocess.Popen(dbus_command, shell=True)
+        print("D-Bus service started successfully.")
+
+    def start_bluetoothd_logs(self, log_text_browser=None):
+        self.bluetoothd_log_name = os.path.join(self.log_path, "bluetoothd.log")
+        subprocess.run("pkill -f bluetoothd", shell=True)
+
+        bluetoothd_command = '/usr/local/bluez/bluez-tools/libexec/bluetooth/bluetoothd -nd --compat'
+        print(f"[INFO] Starting bluetoothd logs...{bluetoothd_command}")
+        self.bluetoothd_process = subprocess.Popen(
+            bluetoothd_command.split(),
+            stdout=open(self.bluetoothd_log_name, 'a+'),
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True
+        )
+
+        if log_text_browser:
+            self._watch_log_file(self.bluetoothd_log_name, log_text_browser)
+
+        print(f"[INFO] Bluetoothd logs started: {self.bluetoothd_log_name}")
+        return True
+
+    def start_pulseaudio_logs(self, log_text_browser=None):
+        self.pulseaudio_log_name = os.path.join(self.log_path, "pulseaudio.log")
+        subprocess.run("pkill -f pulseaudio", shell=True)
+
+        pulseaudio_command = '/usr/local/bluez/pulseaudio-13.0_for_bluez-5.65/bin/pulseaudio -vvv'
+        print(f"[INFO] Starting pulseaudio logs...{pulseaudio_command}")
+        self.pulseaudio_process = subprocess.Popen(
+            pulseaudio_command.split(),
+            stdout=open(self.pulseaudio_log_name, 'a+'),
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True
+        )
+
+        if log_text_browser:
+            self._watch_log_file(self.pulseaudio_log_name, log_text_browser)
+
+        print(f"[INFO] Pulseaudio logs started: {self.pulseaudio_log_name}")
+        return True
+
+    def stop_bluetoothd_logs(self):
+        print("[INFO] Stopping bluetoothd logs...")
+        if self.bluetoothd_process:
+            try:
+                self.bluetoothd_process.terminate()
+                self.bluetoothd_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.bluetoothd_process.kill()
+                self.bluetoothd_process.wait()
+            self.bluetoothd_process = None
+
+    def stop_pulseaudio_logs(self):
+        print("[INFO] Stopping pulseaudio logs...")
+        if self.pulseaudio_process:
+            try:
+                self.pulseaudio_process.terminate()
+                self.pulseaudio_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.pulseaudio_process.kill()
+                self.pulseaudio_process.wait()
+            self.pulseaudio_process = None
+
+    def start_dump_logs(self, interface, log_text_browser=None):
+        try:
+            if not interface:
+                print("[ERROR] Interface is not provided for hcidump")
+                return False
+
+            subprocess.run(f"hciconfig {interface} up".split(), capture_output=True)
+
+            self.hcidump_log_name = os.path.join(self.log_path, f"{interface}_hcidump.log")
+            hcidump_command = f"/usr/local/bluez/bluez-tools/bin/hcidump -i {interface} -Xt"
+            print(f"[INFO] Starting hcidump: {hcidump_command}")
+
+            self.hcidump_process = subprocess.Popen(
+                hcidump_command.split(),
+                stdout=open(self.hcidump_log_name, 'a+'),
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                universal_newlines=True
+            )
+
+            #if log_text_browser:
+             #   self._watch_log_file(self.hcidump_log_name, log_text_browser)
+
+            print(f"[INFO] hcidump process started: {self.hcidump_log_name}")
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to start hcidump: {e}")
+            return False
+
+    def stop_dump_logs(self):
+        print("[INFO] Stopping HCI dump logs")
+        if self.hcidump_process:
+            try:
+                self.hcidump_process.terminate()
+                self.hcidump_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.hcidump_process.kill()
+                self.hcidump_process.wait()
+            self.hcidump_process = None
+
+        if self.interface:
+            try:
+                result = subprocess.run(['pgrep', '-f', f'hcidump.*{self.interface}'], capture_output=True, text=True)
+                if result.stdout.strip():
+                    pids = result.stdout.strip().split('\n')
+                    for pid in pids:
+                        subprocess.run(['kill', '-TERM', pid])
+                    time.sleep(1)
+                    for pid in pids:
+                        subprocess.run(['kill', '-KILL', pid])
+            except Exception as e:
+                print(f"[ERROR] Error killing hcidump: {e}")
+
+        print("[INFO] HCI dump logs stopped successfully")
+
+    def get_controller_details(self, interface=None):
+        self.interface = interface
+        details = {}
+        self.run_command(f'hciconfig -a {self.interface} up')
+        result = self.run_command(f'hciconfig -a {self.interface}')
+
+        for line in result.stdout.split('\n'):
+            line = line.strip()
+            if match := re.match('BD Address: (.*) ACL(.*)', line):
+                details['BD_ADDR'] = match[1]
+            elif match := re.match('Link policy: (.*)', line):
+                details['Link policy'] = match[1]
+            elif match := re.match('Link mode: (.*)', line):
+                details['Link mode'] = match[1]
+            elif match := re.match('Name: (.*)', line):
+                details['Name'] = match[1]
+            elif match := re.match('Class: (.*)', line):
+                details['Class'] = match[1]
+            elif match := re.match(r'HCI Version: ([^ ]+ \([^)]+\))', line):
+                details['HCI Version'] = match[1]
+            elif match := re.match(r'LMP Version: ([^ ]+ \([^)]+\))', line):
+                details['LMP Version'] = match[1]
+            elif match := re.match('Manufacturer: (.*)', line):
+                details['Manufacturer'] = match[1]
+
+        self.name = details.get('Name')
+        self.bd_address = details.get('BD_ADDR')
+        self.link_policy = details.get('Link policy')
+        self.link_mode = details.get('Link mode')
+        self.hci_version = details.get('HCI Version')
+        self.lmp_version = details.get('LMP Version')
+        self.manufacturer = details.get('Manufacturer')
+
+        return details
+
 
     def start_discovery(self):
         """
@@ -532,13 +893,14 @@ class BluetoothDeviceManager:
 
     def start_a2dp_stream(self, address, filepath=None):
         device_path = self.find_device_path(address,interface=self.interface)
-
+        print(device_path)
         if not device_path:
             return "Device not found"
         try:
             # Ensure device_address is stored for stop_a2dp_stream
             self.device_address = address # Store the address of the device being streamed to
             device = dbus.Interface(self.bus.get_object("org.bluez", device_path), "org.bluez.Device1")
+            print(device)
             props = dbus.Interface(self.bus.get_object("org.bluez", device_path), "org.freedesktop.DBus.Properties")
             connected = props.Get("org.bluez.Device1", "Connected")
             if not connected:
@@ -647,7 +1009,47 @@ class BluetoothDeviceManager:
                         connected[address] = name
         return connected
 
-    def media_control(self, command):
+
+    def _get_media_control_interface(self, address, controller=None):
+        """
+        Retrieve the MediaControl1 interface for a given device.
+
+        Args:
+            address (str): The MAC address of the Bluetooth device.
+            controller (str, optional): The controller interface (e.g., 'hci0', 'hci1').
+                                        If None, will match any controller.
+
+        Returns:
+            dbus.Interface: The MediaControl1 D-Bus interface or None if not found.
+        """
+        try:
+            om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+            objects = om.GetManagedObjects()
+            formatted_addr = address.replace(":", "_").upper()
+
+            print("Searching for MediaControl1 interface...")
+            for path, interfaces in objects.items():
+                if "org.bluez.MediaControl1" in interfaces and formatted_addr in path:
+                    if controller:
+                        if f"/{controller}/dev_{formatted_addr}" in path:
+                            print(f"Found MediaControl1 interface at: {path}")
+                            return dbus.Interface(
+                                self.bus.get_object("org.bluez", path),
+                                "org.bluez.MediaControl1"
+                            )
+                    else:
+                        print(f"Found MediaControl1 interface at: {path}")
+                        return dbus.Interface(
+                            self.bus.get_object("org.bluez", path),
+                            "org.bluez.MediaControl1"
+                        )
+
+            print(f"No MediaControl1 interface found for device: {address} on controller: {controller or 'any'}")
+        except Exception as e:
+            print(f"Failed to get MediaControl1 interface: {e}")
+        return None
+
+    def media_control(self, command,address):
         """
         Send an AVRCP media control command to a connected A2DP device using the correct controller.
 
@@ -656,6 +1058,7 @@ class BluetoothDeviceManager:
         :param command: The command to send as a string.
         :return: Result message.
         """
+        self.address=address
         valid = {
             "play": "Play",
             "pause": "Pause",
@@ -667,17 +1070,16 @@ class BluetoothDeviceManager:
         if command not in valid:
             return f"Invalid command: {command}"
 
-        om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
-        objects = om.GetManagedObjects()
+        #om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+        #objects = om.GetManagedObjects()
 
         # Filter MediaControl1 interfaces under the current adapter (e.g., hci0)
-        for path, interfaces in objects.items():
-            if "org.bluez.MediaControl1" in interfaces and f"/{self.interface}/" in path:
-                try:
-                    control_iface = dbus.Interface(self.bus.get_object("org.bluez", path), "org.bluez.MediaControl1")
-                    getattr(control_iface, valid[command])()
-                    return f"AVRCP {command} sent to {path}"
-                except Exception as e:
-                    return f"Error sending AVRCP {command}: {str(e)}"
+
+        try:
+            control_iface =self._get_media_control_interface(address,self.interface)
+            getattr(control_iface, valid[command])()
+            return f"AVRCP {command} sent to {address}"
+        except Exception as e:
+            return f"Error sending AVRCP {command}: {str(e)}"
 
         return f"No MediaControl1 interface found under {self.interface} (is device connected via A2DP with AVRCP?)"

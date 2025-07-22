@@ -6,6 +6,18 @@ import style_sheet as ss
 
 
 from Backend_lib.Linux import hci_commands as hci
+
+from PyQt6.QtCore import QFileSystemWatcher
+from PyQt6.QtWidgets import QTextBrowser
+
+import logging
+import os
+import re
+import subprocess
+import time
+#import sip
+
+
 class TestControllerUI(QWidget):
     """
     UI component for displaying and executing HCI commands for a Bluetooth controller.
@@ -98,26 +110,26 @@ class TestControllerUI(QWidget):
         self.logs_layout.addWidget(logs_label)
 
         self.dump_log_output = QTextEdit()
-        # Remove setMaximumWidth(700) as it can restrict the width of the log output
-        # self.dump_log_output.setMaximumWidth(700)
         self.dump_log_output.setReadOnly(True)
         self.dump_log_output.setStyleSheet("background: transparent;color: black;border: 2px solid black;")
 
         # Start HCI dump logging
-        self.bluez_logger.start_dump_logs(interface=self.controller.interface, log_text_browser=self.dump_log_output)
+        self.bluez_logger.start_dump_logs(interface=self.controller.interface)
 
-        self.bluez_logger.logfile_fd = open(self.bluez_logger.hcidump_log_name, 'r')
-        if self.bluez_logger.logfile_fd:
-            content = self.bluez_logger.logfile_fd.read()
+        self.log_file_path=self.bluez_logger.hcidump_log_name
+        self.log_file_fd=open(self.log_file_path, "r")
+
+        if self.log_file_fd:
+            content=self.log_file_fd.read()
             self.dump_log_output.append(content)
-            self.bluez_logger.file_position = self.bluez_logger.logfile_fd.tell()
-            self.logs_layout.addWidget(self.dump_log_output)
-            
-        '''
+            self.file_position=self.log_file_fd.tell()
+
+
         self.file_watcher = QFileSystemWatcher()
-        self.file_watcher.addPath(self.bluez_logger.hcidump_log_name)
+        self.file_watcher.addPath(self.log_file_path)
         self.file_watcher.fileChanged.connect(self.update_log)
-        '''
+        self.logs_layout.addWidget(self.dump_log_output)
+
         # Add the logs_layout to the main_layout in column 2, row 0
         main_layout.addLayout(self.logs_layout, 0, 2)
 
@@ -158,11 +170,11 @@ class TestControllerUI(QWidget):
         args: None
         returns: None
         """
-        if self.bluez_logger.logfile_fd is None:
+        if not self.log_file_fd:
             return
-        self.bluez_logger.logfile_fd.seek(self.bluez_logger.file_position)
-        content = self.bluez_logger.logfile_fd.read()
-        self.bluez_logger.file_position = self.bluez_logger.logfile_fd.tell()
+        self.log_file_fd.seek(self.file_position)
+        content = self.log_file_fd.read()
+        self.file_position = self.log_file_fd.tell()
         self.dump_log_output.append(content)
 
     def run_hci_cmd(self, text_selected):
